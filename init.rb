@@ -1,5 +1,3 @@
-require 'redmine_auditlog'
-
 Redmine::Plugin.register :redmine_auditlog do
   name 'Redmine Auditlog'
   author 'Alex Stanev'
@@ -9,8 +7,6 @@ Redmine::Plugin.register :redmine_auditlog do
   author_url 'https://www.stanev.org'
   requires_redmine :version_or_higher => '3.0.0'
   Audited.current_user_method = :find_current_user
-
-  Rails.configuration.to_prepare do
     Attachment.send(:include, RedmineAuditlog::AuditlogPatch)
     AuthSource.send(:include, RedmineAuditlog::AuditlogPatchAuthSource)
     Board.send(:include, RedmineAuditlog::AuditlogPatch)
@@ -58,5 +54,4 @@ Redmine::Plugin.register :redmine_auditlog do
       User.send(:include, RedmineAuditlog::AuditlogPatchUser)
       Group.send(:include, RedmineAuditlog::AuditlogPatch)
     end
-  end
 end
