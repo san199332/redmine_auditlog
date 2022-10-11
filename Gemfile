@@ -2,4 +2,4 @@
 
 source 'https://rubygems.org'
 
-gem 'audited', '~> 4.9'
+gem 'audited', '~> 5.0.2'

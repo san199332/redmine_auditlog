@@ -4,17 +4,41 @@ Redmine Auditlog
 Provides full auditlog for user actions in Redmine instance.
 
 ### Warning
+Attention this version only works on 5.x
 
-Under Redmine 4.x User and Group objects are not currently audited!
+To work with redmine version 5.0.3 add to config/application.rb:
 
+config.active_record.yaml_column_permitted_classes = [
+      Symbol,
+      ActiveSupport::HashWithIndifferentAccess,
+      ActiveSupport::TimeWithZone,
+      Time,
+      Date,
+      ActiveSupport::TimeZone,
+      ActionController::Parameters
+    ]
 
-How to use
+How to install
 -------
 ```
-  $ cd /path/to/redmine/plugins
+  $ cd /var/www/redmine/plugins
   $ git clone https://github.com/RealEnder/redmine_auditlog
-  $ cd redmine_auditlog
-  $ rails generate audited:install # If using PostgreSQL, add "--audited-changes-column-type jsonb" for more efficient storage
+  $ cd /var/www/redmine
+  $ bundle install
+  $ cd /var/www/redmine/plugins/redmine_auditlog
+  $ RAILS_ENV="production" rails generate audited:install # If using PostgreSQL, add "--audited-changes-column-type jsonb" for more efficient storage
+  $ cd ../..
+  $ rake db:migrate RAILS_ENV="production"
+```
+Then restart Redmine.
+
+How to upgrade
+-------
+```
+  $ cd /var/www/redmine
+  $ bundle install
+  $ cd /var/www/redmine/plugins/redmine_auditlog
+  $ RAILS_ENV="production" rails generate audited:upgrade # If using PostgreSQL, add "--audited-changes-column-type jsonb" for more efficient storage
   $ cd ../..
   $ rake db:migrate RAILS_ENV="production"
 ```
@@ -23,19 +47,19 @@ Then restart Redmine.
 How to remove
 -------
 ```
-  $ cd /path/to/redmine
+  $ cd /var/www/redmine
   $ rake redmine:plugins:migrate NAME=redmine_auditlog VERSION=0 RAILS_ENV=production
   $ rm -rf plugins/redmine_auditlog
 ```
 Then restart Redmine. This will not remove audit table.
 
 
-Compatible with:	Redmine 3.4.x, 3.3.x, 3.2.x, 3.1.x, 3.0.x, 4.0.x, 4.1.x  
-Tested with Redmine 3.4.6, 4.1.1
+Compatible with:	Redmine 5.x  
+Tested with Redmine 5.0.3
 
 License
 -------
-Copyright 2018-2020 Alex Stanev <alex@stanev.org>  
+Copyright 2022 Alexandr Antonov
 This plugin is released under the GPL v3 license. See  
 LICENSE for more information.
 
