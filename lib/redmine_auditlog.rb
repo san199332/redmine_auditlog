@@ -109,7 +109,7 @@ module RedmineAuditlog
       end
 
       def create_table!
-        post_query(create_table_query(qualified_table), '')
+        post_query(create_table_query, '')
       rescue StandardError => e
         log_error("ClickHouse audit table creation failed: #{e.class}: #{e.message}")
         nil
@@ -122,6 +122,7 @@ module RedmineAuditlog
         nil
       end
 
+
       def database
         identifier(env('DATABASE'), DEFAULT_DATABASE)
       end
@@ -129,6 +130,7 @@ module RedmineAuditlog
       def table
         identifier(env('TABLE'), DEFAULT_TABLE)
       end
+
 
       def external_enabled?
         env('URL', :external).to_s.strip != ''
@@ -227,40 +229,14 @@ module RedmineAuditlog
         time.iso8601(6)
       end
 
-      def insert_query(wait_for_insert: false, target: :local)
-        settings = async_insert?(target) ? " SETTINGS async_insert=1, wait_for_async_insert=#{wait_for_insert ? 1 : 0}" : ''
-        "INSERT INTO #{qualified_table(target)}#{settings} FORMAT JSONEachRow"
+      def insert_query(wait_for_insert: false)
+        settings = async_insert? ? " SETTINGS async_insert=1, wait_for_async_insert=#{wait_for_insert ? 1 : 0}" : ''
+        "INSERT INTO #{qualified_table}#{settings} FORMAT JSONEachRow"
       end
 
-      def select_query(last_id:, to_id:, older_than_days:)
-        conditions = ["redmine_audit_id > #{last_id.to_i}"]
-        conditions << "redmine_audit_id <= #{to_id.to_i}" if to_id.to_i.positive?
-        if older_than_days.to_i.positive?
-          cutoff = (Time.now.utc - older_than_days.to_i * 86_400).iso8601(6)
-          conditions << "event_time < parseDateTime64BestEffort('#{cutoff}', 6, 'UTC')"
-        end
-
+      def create_table_query
         <<~SQL
-          SELECT #{select_columns.join(', ')}
-          FROM #{qualified_table}
-          WHERE #{conditions.join(' AND ')}
-          ORDER BY redmine_audit_id
-          LIMIT #{batch_size}
-          FORMAT JSONEachRow
-        SQL
-      end
-
-      def select_columns
-        %w[
-          redmine_audit_id event_time auditable_type auditable_id associated_type associated_id
-          user_type user_id username action remote_address request_uuid version comment
-          audited_changes_json audit_json
-        ]
-      end
-
-      def create_table_query(table_name)
-        <<~SQL
-          CREATE TABLE IF NOT EXISTS #{table_name} (
+          CREATE TABLE IF NOT EXISTS #{qualified_table} (
             redmine_audit_id UInt64,
             event_time DateTime64(6, 'UTC'),
             auditable_type LowCardinality(String),
@@ -284,16 +260,17 @@ module RedmineAuditlog
         SQL
       end
 
-      def qualified_table(target = :local)
-        target == :external ? "#{external_database}.#{external_table}" : "#{database}.#{table}"
+
+      def qualified_table
+        "#{database}.#{table}"
       end
 
-      def post_query(query, body, target: :local)
-        endpoint = uri(target)
+      def post_query(query, body)
+        endpoint = uri
         endpoint.query = [endpoint.query, "query=#{URI.encode_www_form_component(query)}"].compact.join('&')
 
         request = Net::HTTP::Post.new(endpoint)
-        request.basic_auth(env('USER', target), env('PASSWORD', target)) if env('USER', target).to_s != ''
+        request.basic_auth(env('USER'), env('PASSWORD')) if env('USER').to_s != ''
         request['Content-Type'] = 'application/x-ndjson'
         request.body = body
 
@@ -305,8 +282,9 @@ module RedmineAuditlog
         end
       end
 
-      def uri(target = :local)
-        URI.parse(env('URL', target))
+
+      def uri
+        URI.parse(env('URL'))
       end
 
       def timeout
@@ -319,14 +297,10 @@ module RedmineAuditlog
         env('CREATE_TABLE').to_s != 'false'
       end
 
-      def create_external_table?
-        env('CREATE_TABLE', :external).to_s != 'false'
-      end
-
       private
 
-      def async_insert?(target = :local)
-        env('ASYNC_INSERT', target).to_s == 'true'
+      def async_insert?
+        env('ASYNC_INSERT').to_s == 'true'
       end
 
       def identifier(value, default)
@@ -336,9 +310,9 @@ module RedmineAuditlog
         raise ArgumentError, "Invalid ClickHouse identifier: #{candidate.inspect}"
       end
 
-      def env(name, target = :local)
-        key = target == :external ? "#{ENV_PREFIX}EXTERNAL_#{name}" : "#{ENV_PREFIX}#{name}"
-        ENV[key]
+
+      def env(name)
+        ENV["#{ENV_PREFIX}#{name}"]
       end
 
       def log_error(message)

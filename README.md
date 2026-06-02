@@ -40,7 +40,8 @@ The plugin can additionally stream every created `audited` record to ClickHouse 
 Set `REDMINE_AUDITLOG_CLICKHOUSE_URL` to enable the exporter:
 
 ```
-REDMINE_AUDITLOG_CLICKHOUSE_URL=http://127.0.0.1:8123
+
+REDMINE_AUDITLOG_CLICKHOUSE_URL=http://clickhouse.example.com:8123
 REDMINE_AUDITLOG_CLICKHOUSE_DATABASE=redmine
 REDMINE_AUDITLOG_CLICKHOUSE_TABLE=redmine_audits
 REDMINE_AUDITLOG_CLICKHOUSE_USER=default
@@ -50,11 +51,13 @@ REDMINE_AUDITLOG_CLICKHOUSE_ASYNC_INSERT=true
 REDMINE_AUDITLOG_CLICKHOUSE_TIMEOUT=3
 REDMINE_AUDITLOG_CLICKHOUSE_PURGE_AFTER_EXPORT=false
 REDMINE_AUDITLOG_CLICKHOUSE_BATCH_SIZE=1000
+
 REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_URL=https://external-clickhouse.example.com:8443
 REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_DATABASE=redmine
 REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_TABLE=redmine_audits
 REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_USER=default
 REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_PASSWORD=secret
+
 ```
 
 Configuration:
@@ -68,6 +71,7 @@ Configuration:
 * `REDMINE_AUDITLOG_CLICKHOUSE_TIMEOUT` - HTTP open/read timeout in seconds, defaults to `3`.
 * `REDMINE_AUDITLOG_CLICKHOUSE_PURGE_AFTER_EXPORT` - set to `true` to delete the local Redmine audit row only after a successful ClickHouse insert. Keep it `false` unless ClickHouse is your primary audit store.
 * `REDMINE_AUDITLOG_CLICKHOUSE_BATCH_SIZE` - batch size for maintenance rake tasks, defaults to `1000`.
+
 * `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_URL` - optional external ClickHouse HTTP endpoint used by `redmine_auditlog:clickhouse:sync_external`.
 * `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_DATABASE` and `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_TABLE` - external database/table names. They default to the local ClickHouse database/table values.
 * `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_USER` and `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_PASSWORD` - optional HTTP basic auth credentials for the external ClickHouse.
@@ -116,6 +120,7 @@ REDMINE_AUDITLOG_CLICKHOUSE_PURGE_AFTER_BACKFILL=true \
 RAILS_ENV=production rake redmine_auditlog:clickhouse:backfill
 ```
 
+
 Rows are sent with `FORMAT JSONEachRow`. The table stores both normalized fields (`event_time`, `auditable_type`, `user_id`, `action`, and so on) and JSON payload strings:
 
 * `audited_changes_json` - the JSON representation of the `audited_changes` payload.
@@ -146,8 +151,6 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
 ORDER BY (event_time, auditable_type, auditable_id, redmine_audit_id);
 ```
-
-
 
 Local-to-external ClickHouse forwarding
 -------

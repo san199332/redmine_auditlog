@@ -71,5 +71,6 @@ namespace :redmine_auditlog do
 
       puts "Copied #{synced} local ClickHouse audit row(s) to external ClickHouse."
     end
+
   end
 end
