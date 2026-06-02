@@ -59,5 +59,18 @@ namespace :redmine_auditlog do
       puts "Skipped #{failed} row(s) because ClickHouse export failed." if failed.positive?
       puts "Deleted #{deleted} local audit row(s) older than #{days} day(s)."
     end
+
+    desc 'Copy rows from the local ClickHouse audit table to an external ClickHouse table.'
+    task sync_external: :environment do
+      from_id = ENV['REDMINE_AUDITLOG_CLICKHOUSE_SYNC_FROM_ID']
+      to_id = ENV['REDMINE_AUDITLOG_CLICKHOUSE_SYNC_TO_ID']
+      older_than_days = ENV['REDMINE_AUDITLOG_CLICKHOUSE_SYNC_OLDER_THAN_DAYS']
+      synced = RedmineAuditlog::Clickhouse.sync_external!(from_id: from_id, to_id: to_id, older_than_days: older_than_days)
+
+      abort 'External ClickHouse sync failed. Check Redmine logs.' if synced.nil?
+
+      puts "Copied #{synced} local ClickHouse audit row(s) to external ClickHouse."
+    end
+
   end
 end

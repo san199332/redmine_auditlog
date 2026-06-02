@@ -115,12 +115,58 @@ module RedmineAuditlog
         nil
       end
 
+      def create_external_table!
+        post_query(create_table_query(qualified_table(:external)), '', target: :external)
+      rescue StandardError => e
+        log_error("External ClickHouse audit table creation failed: #{e.class}: #{e.message}")
+        nil
+      end
+
+
       def database
         identifier(env('DATABASE'), DEFAULT_DATABASE)
       end
 
       def table
         identifier(env('TABLE'), DEFAULT_TABLE)
+      end
+
+
+      def external_enabled?
+        env('URL', :external).to_s.strip != ''
+      end
+
+      def external_database
+        identifier(env('DATABASE', :external), database)
+      end
+
+      def external_table
+        identifier(env('TABLE', :external), table)
+      end
+
+      def sync_external!(from_id: nil, to_id: nil, older_than_days: nil)
+        raise 'External ClickHouse export is disabled. Set REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_URL.' unless external_enabled?
+
+        create_external_table! if create_external_table?
+
+        last_id = from_id.to_i.positive? ? from_id.to_i - 1 : 0
+        synced = 0
+
+        loop do
+          body = post_query(select_query(last_id: last_id, to_id: to_id, older_than_days: older_than_days), '').body
+          break if body.to_s.strip == ''
+
+          rows = body.lines.map { |line| JSON.parse(line) }
+          post_query(insert_query(wait_for_insert: true, target: :external), body, target: :external)
+          synced += rows.size
+          last_id = rows.map { |row| row['redmine_audit_id'].to_i }.max
+          break if rows.size < batch_size
+        end
+
+        synced
+      rescue StandardError => e
+        log_error("External ClickHouse sync failed: #{e.class}: #{e.message}")
+        nil
       end
 
       private
@@ -214,6 +260,7 @@ module RedmineAuditlog
         SQL
       end
 
+
       def qualified_table
         "#{database}.#{table}"
       end
@@ -234,6 +281,7 @@ module RedmineAuditlog
           raise "#{response.code} #{response.message}: #{response.body}"
         end
       end
+
 
       def uri
         URI.parse(env('URL'))
@@ -261,6 +309,7 @@ module RedmineAuditlog
 
         raise ArgumentError, "Invalid ClickHouse identifier: #{candidate.inspect}"
       end
+
 
       def env(name)
         ENV["#{ENV_PREFIX}#{name}"]

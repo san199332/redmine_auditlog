@@ -40,6 +40,7 @@ The plugin can additionally stream every created `audited` record to ClickHouse 
 Set `REDMINE_AUDITLOG_CLICKHOUSE_URL` to enable the exporter:
 
 ```
+
 REDMINE_AUDITLOG_CLICKHOUSE_URL=http://clickhouse.example.com:8123
 REDMINE_AUDITLOG_CLICKHOUSE_DATABASE=redmine
 REDMINE_AUDITLOG_CLICKHOUSE_TABLE=redmine_audits
@@ -50,6 +51,13 @@ REDMINE_AUDITLOG_CLICKHOUSE_ASYNC_INSERT=true
 REDMINE_AUDITLOG_CLICKHOUSE_TIMEOUT=3
 REDMINE_AUDITLOG_CLICKHOUSE_PURGE_AFTER_EXPORT=false
 REDMINE_AUDITLOG_CLICKHOUSE_BATCH_SIZE=1000
+
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_URL=https://external-clickhouse.example.com:8443
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_DATABASE=redmine
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_TABLE=redmine_audits
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_USER=default
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_PASSWORD=secret
+
 ```
 
 Configuration:
@@ -63,6 +71,55 @@ Configuration:
 * `REDMINE_AUDITLOG_CLICKHOUSE_TIMEOUT` - HTTP open/read timeout in seconds, defaults to `3`.
 * `REDMINE_AUDITLOG_CLICKHOUSE_PURGE_AFTER_EXPORT` - set to `true` to delete the local Redmine audit row only after a successful ClickHouse insert. Keep it `false` unless ClickHouse is your primary audit store.
 * `REDMINE_AUDITLOG_CLICKHOUSE_BATCH_SIZE` - batch size for maintenance rake tasks, defaults to `1000`.
+
+* `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_URL` - optional external ClickHouse HTTP endpoint used by `redmine_auditlog:clickhouse:sync_external`.
+* `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_DATABASE` and `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_TABLE` - external database/table names. They default to the local ClickHouse database/table values.
+* `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_USER` and `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_PASSWORD` - optional HTTP basic auth credentials for the external ClickHouse.
+* `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_CREATE_TABLE` - creates the external table during sync unless set to `false`.
+* `REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_ASYNC_INSERT` - set to `true` to use asynchronous inserts on the external ClickHouse.
+
+ClickHouse-primary installation
+-------
+
+The `audited` gem still needs the local Redmine `audits` table because audit rows are created inside the Redmine database transaction first. To use ClickHouse as the only long-term audit storage, install the local table as usual, enable ClickHouse export, and turn on immediate local cleanup after successful export.
+
+Example production install:
+
+```
+cd /var/www/redmine/plugins
+git clone https://github.com/RealEnder/redmine_auditlog
+cd /var/www/redmine
+bundle install
+cd /var/www/redmine/plugins/redmine_auditlog
+RAILS_ENV=production rails generate audited:install
+cd ../..
+rake db:migrate RAILS_ENV=production
+```
+
+Then configure Redmine, systemd, Docker, or the shell that starts Redmine with ClickHouse-primary mode:
+
+```
+REDMINE_AUDITLOG_CLICKHOUSE_URL=http://127.0.0.1:8123
+REDMINE_AUDITLOG_CLICKHOUSE_DATABASE=redmine
+REDMINE_AUDITLOG_CLICKHOUSE_TABLE=redmine_audits
+REDMINE_AUDITLOG_CLICKHOUSE_USER=default
+REDMINE_AUDITLOG_CLICKHOUSE_PASSWORD=secret
+REDMINE_AUDITLOG_CLICKHOUSE_CREATE_TABLE=true
+REDMINE_AUDITLOG_CLICKHOUSE_ASYNC_INSERT=true
+REDMINE_AUDITLOG_CLICKHOUSE_PURGE_AFTER_EXPORT=true
+```
+
+With `REDMINE_AUDITLOG_CLICKHOUSE_PURGE_AFTER_EXPORT=true`, every new audit row is inserted into ClickHouse first and then removed from the local Redmine audit table. If ClickHouse is unavailable or rejects the insert, the local row is kept and the error is logged.
+
+This mode matches a setup where MySQL should not retain audit history: the row is still created briefly by `audited`, but after a successful local ClickHouse insert it is removed from MySQL automatically.
+
+For already existing local audit history, run a backfill once after enabling ClickHouse:
+
+```
+REDMINE_AUDITLOG_CLICKHOUSE_PURGE_AFTER_BACKFILL=true \
+RAILS_ENV=production rake redmine_auditlog:clickhouse:backfill
+```
+
 
 Rows are sent with `FORMAT JSONEachRow`. The table stores both normalized fields (`event_time`, `auditable_type`, `user_id`, `action`, and so on) and JSON payload strings:
 
@@ -95,6 +152,46 @@ PARTITION BY toYYYYMM(event_time)
 ORDER BY (event_time, auditable_type, auditable_id, redmine_audit_id);
 ```
 
+Local-to-external ClickHouse forwarding
+-------
+
+For a two-tier setup, point `REDMINE_AUDITLOG_CLICKHOUSE_URL` to the local ClickHouse and configure the `EXTERNAL_` variables for the remote ClickHouse:
+
+```
+REDMINE_AUDITLOG_CLICKHOUSE_URL=http://127.0.0.1:8123
+REDMINE_AUDITLOG_CLICKHOUSE_DATABASE=redmine
+REDMINE_AUDITLOG_CLICKHOUSE_TABLE=redmine_audits
+REDMINE_AUDITLOG_CLICKHOUSE_PURGE_AFTER_EXPORT=true
+REDMINE_AUDITLOG_CLICKHOUSE_ASYNC_INSERT=true
+
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_URL=https://external-clickhouse.example.com:8443
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_DATABASE=redmine
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_TABLE=redmine_audits
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_USER=default
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_PASSWORD=secret
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_CREATE_TABLE=true
+REDMINE_AUDITLOG_CLICKHOUSE_EXTERNAL_ASYNC_INSERT=true
+```
+
+New Redmine events flow as follows:
+
+1. `audited` creates a short-lived row in the local Redmine/MySQL `audits` table.
+2. The plugin writes that row to the **local ClickHouse**.
+3. With `REDMINE_AUDITLOG_CLICKHOUSE_PURGE_AFTER_EXPORT=true`, the plugin deletes the local MySQL audit row after the local ClickHouse insert succeeds.
+4. A scheduled task copies rows from the **local ClickHouse** to the **external ClickHouse**.
+
+Run the local-to-external copy manually or from cron:
+
+```
+RAILS_ENV=production rake redmine_auditlog:clickhouse:sync_external
+```
+
+Optional sync filters:
+
+* `REDMINE_AUDITLOG_CLICKHOUSE_SYNC_FROM_ID` / `REDMINE_AUDITLOG_CLICKHOUSE_SYNC_TO_ID` - copy only a local ClickHouse audit id range.
+* `REDMINE_AUDITLOG_CLICKHOUSE_SYNC_OLDER_THAN_DAYS` - copy only local ClickHouse rows older than this many days.
+
+The sync task reads `JSONEachRow` batches from the local ClickHouse table and inserts the same rows into the external ClickHouse table. If you need exactly-once external replication, use ClickHouse-native replication or a table engine/deduplication strategy on the external cluster; this rake task is intentionally simple and safe to run in controlled id ranges.
 
 Local audit cleanup and backfill
 -------
